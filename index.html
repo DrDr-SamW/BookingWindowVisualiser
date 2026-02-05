@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Flow Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .day-cell { min-height: 95px; transition: all 0.2s; position: relative; border: 1px solid #f1f5f9; }
+        .is-today { border: 3px solid #1e293b !important; z-index: 30; background-color: #f8fafc; }
+        .today-badge { 
+            position: absolute; top: 2px; right: 2px; 
+            background: #1e293b; color: white; 
+            font-size: 8px; padding: 1px 4px; border-radius: 3px; font-weight: 800;
+        }
+        .is-ideal { background-color: #ef4444 !important; color: white !important; font-weight: bold; z-index: 10; }
+        .is-invite { background-color: #3b82f6 !important; color: white !important; }
+        .is-ideal-invite-anchor { border: 2px dashed #3b82f6; background-color: #eff6ff; }
+        
+        /* Flexibility Window */
+        .is-buffer-before { background-color: #ecfdf5; border-left: 2px solid #10b981; }
+        .is-buffer-after { background-color: #f0fdf4; border-right: 2px solid #22c55e; }
+        .is-buffer-both { background-color: #dcfce7; }
+
+        /* Capacity Constraint Visualization (Amber Striped) */
+        .is-waiting { background-image: repeating-linear-gradient(45deg, #fffbeb, #fffbeb 10px, #fef3c7 10px, #fef3c7 20px); border: 1px dashed #d97706; }
+        .is-manual { background-image: repeating-linear-gradient(45deg, #fffbeb, #fffbeb 10px, #fef3c7 10px, #fef3c7 20px); border: 1px dashed #d97706; color: #92400e !important; z-index: 15; }
+        
+        .is-in-search { border-bottom: 5px solid #3b82f6; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 6px; }
+        #calendarContainer { max-height: 80vh; overflow-y: auto; scroll-behavior: smooth; }
+
+        /* Toggle Switch Styling */
+        .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #f97316; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+
+    <div class="max-w-7xl mx-auto p-6">
+        <header class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">Booking Logic Configuration</h1>
+                <p class="text-slate-500 text-sm">Define how the system identifies slots and when humans need to intervene.</p>
+            </div>
+            
+            <!-- Mode Selector -->
+            <div class="bg-white border-2 border-slate-200 px-6 py-4 rounded-2xl shadow-sm flex items-center gap-6">
+                <div class="text-right">
+                    <span id="mode-label" class="block text-sm font-bold text-slate-700">Standard Booking Mode</span>
+                    <span class="block text-[10px] text-slate-400 uppercase font-black tracking-widest">Toggle to see Capacity Failures</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="sim-capacity-failure">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- Parameters -->
+            <div class="lg:col-span-3 space-y-4">
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                    <h2 class="font-bold mb-6 text-slate-700 uppercase text-[10px] tracking-widest border-b pb-2">Global Settings</h2>
+                    
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-2">Invite Sent Date</label>
+                            <input type="range" id="param-invite" min="7" max="45" value="10" class="w-full accent-blue-600">
+                            <span class="text-xs font-bold text-blue-600" id="val-invite">21 Days before</span>
+                        </div>
+
+                        <div class="pb-4 border-b border-slate-50">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-3">Patient Slot Viewing Window</label>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-emerald-600 uppercase mb-1">Before Ideal Date</label>
+                                    <input type="range" id="param-buffer-before" min="0" max="14" value="3" class="w-full accent-emerald-600">
+                                    <span class="text-[10px] font-bold text-emerald-700" id="val-buffer-before">-3d</span>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-green-600 uppercase mb-1">After Ideal Date</label>
+                                    <input type="range" id="param-buffer-after" min="0" max="21" value="10" class="w-full accent-green-600">
+                                    <span class="text-[10px] font-bold text-green-700" id="val-buffer-after">+10d</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="manual-setting-container" class="p-3 bg-slate-50 rounded-lg border border-slate-100 opacity-40 grayscale transition-all duration-500">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Manual Booking Trigger</label>
+                            <input type="range" id="param-manual" min="1" max="25" value="14" class="w-full accent-orange-600" disabled>
+                            <span class="text-xs font-bold text-slate-500" id="val-manual">Wait 14 days</span>
+                            <p class="text-[9px] mt-2 text-slate-400 italic">Enabled in Capacity Failure mode.</p>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 pt-6 border-t border-slate-100">
+                        <h2 class="font-bold mb-3 text-[10px] uppercase text-slate-400 font-black">Legend</h2>
+                        <ul id="legend-list" class="space-y-2 text-[11px]">
+                            <!-- Legend items dynamic -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calendar Container -->
+            <div class="lg:col-span-9">
+                <div id="calendarContainer" class="space-y-8 pr-2 pb-20">
+                    <!-- JS renders -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        let idealDate = new Date(today);
+        idealDate.setDate(today.getDate() + 10); 
+
+        function updateUIState(isFailure) {
+            const manualContainer = document.getElementById('manual-setting-container');
+            const manualInput = document.getElementById('param-manual');
+            const modeLabel = document.getElementById('mode-label');
+            const legend = document.getElementById('legend-list');
+
+            if(isFailure) {
+                manualContainer.classList.remove('opacity-40', 'grayscale', 'bg-slate-50');
+                manualContainer.classList.add('bg-orange-50', 'border-orange-100');
+                manualInput.disabled = false;
+                modeLabel.innerText = "Capacity Failure Mode";
+                modeLabel.classList.add('text-orange-600');
+                
+                legend.innerHTML = `
+                    <li><span class="legend-dot bg-blue-500"></span> Invite Sent</li>
+                    <li><span class="legend-dot border-2 border-dashed border-blue-500"></span> Desired Invite Date</li>
+                    <li><span class="legend-dot bg-red-500"></span> Ideal Appt Date</li>
+                    <li><span class="legend-dot bg-emerald-50 border-l-2 border-emerald-500"></span> Early Window</li>
+                    <li><span class="legend-dot bg-green-50 border-r-2 border-green-500"></span> Late Window</li>
+                    <li><span class="legend-dot bg-amber-100 border border-amber-400" style="background-image: repeating-linear-gradient(45deg, #fffbeb, #fffbeb 3px, #fef3c7 3px, #fef3c7 6px);"></span> Daily Capacity Retry</li>
+                `;
+            } else {
+                manualContainer.classList.add('opacity-40', 'grayscale', 'bg-slate-50');
+                manualContainer.classList.remove('bg-orange-50', 'border-orange-100');
+                manualInput.disabled = true;
+                modeLabel.innerText = "Standard Booking Mode";
+                modeLabel.classList.remove('text-orange-600');
+
+                legend.innerHTML = `
+                    <li><span class="legend-dot bg-blue-500"></span> Auto-Invite Sent</li>
+                    <li><span class="legend-dot bg-red-500"></span> Ideal Appt Date</li>
+                    <li><span class="legend-dot bg-emerald-50 border-l-2 border-emerald-500"></span> Early Window</li>
+                    <li><span class="legend-dot bg-green-50 border-r-2 border-green-500"></span> Late Window</li>
+                `;
+            }
+        }
+
+        function renderAll() {
+            const container = document.getElementById('calendarContainer');
+            container.innerHTML = ''; 
+
+            const inviteLead = parseInt(document.getElementById('param-invite').value);
+            const bufferBefore = parseInt(document.getElementById('param-buffer-before').value);
+            const bufferAfter = parseInt(document.getElementById('param-buffer-after').value);
+            const manualWait = parseInt(document.getElementById('param-manual').value);
+            const isFailure = document.getElementById('sim-capacity-failure').checked;
+
+            updateUIState(isFailure);
+
+            // Labels
+            document.getElementById('val-invite').innerText = inviteLead + ' Days before Ideal';
+            document.getElementById('val-buffer-before').innerText = bufferBefore + ' days';
+            document.getElementById('val-buffer-after').innerText = bufferAfter + ' days';
+            document.getElementById('val-manual').innerText = isFailure ? 'Handover after ' + manualWait + ' days' : 'Disabled';
+
+            const idealInviteDate = new Date(idealDate);
+            idealInviteDate.setDate(idealDate.getDate() - inviteLead);
+
+            const manualEscalationDate = new Date(idealInviteDate);
+            manualEscalationDate.setDate(idealInviteDate.getDate() + manualWait);
+
+            let inviteSentDate = new Date(idealInviteDate);
+            if (isFailure) {
+                // If failing, move the actual invite to the day before staff handover
+                inviteSentDate = new Date(manualEscalationDate);
+                inviteSentDate.setDate(manualEscalationDate.getDate() - 1);
+            }
+
+            // Calculate total window size (in days)
+            const totalWindowDays = bufferBefore + bufferAfter;
+
+            // Initial buffer calculation based on ideal date
+            let bufferStart = new Date(idealDate);
+            bufferStart.setDate(idealDate.getDate() - bufferBefore);
+            let bufferEnd = new Date(idealDate);
+            bufferEnd.setDate(idealDate.getDate() + bufferAfter);
+
+            // Determine which invite date to use for overlap check
+            const relevantInviteDate = isFailure ? inviteSentDate : idealInviteDate;
+
+            // If invite date overlaps with or falls within the window, shift window to start 1 day after invite
+            if (relevantInviteDate.getTime() >= bufferStart.getTime()) {
+                bufferStart = new Date(relevantInviteDate);
+                bufferStart.setDate(relevantInviteDate.getDate() + 1);
+                bufferEnd = new Date(bufferStart);
+                bufferEnd.setDate(bufferStart.getDate() + totalWindowDays);
+            }
+
+            const latestDate = new Date(Math.max(idealDate, bufferEnd, manualEscalationDate, inviteSentDate));
+            let currentDisplayMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            const lastDisplayMonth = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1);
+
+            while (currentDisplayMonth <= lastDisplayMonth) {
+                renderMonth(container, currentDisplayMonth, {
+                    today, idealDate, idealInviteDate, inviteSentDate, manualEscalationDate, bufferStart, bufferEnd, isFailure
+                });
+                currentDisplayMonth.setMonth(currentDisplayMonth.getMonth() + 1);
+            }
+        }
+
+        function renderMonth(container, monthDate, d) {
+            const monthWrapper = document.createElement('div');
+            monthWrapper.className = "bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden";
+            monthWrapper.innerHTML = `
+                <div class="bg-slate-800 p-3 text-white font-bold text-[10px] uppercase tracking-widest">${monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
+                <div class="grid grid-cols-7 text-[8px] font-black text-slate-300 bg-slate-50 border-b border-slate-200 text-center py-2">
+                    <div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div>
+                </div>
+            `;
+
+            const daysGrid = document.createElement('div');
+            daysGrid.className = "grid grid-cols-7";
+            const firstDay = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1).getDay();
+            const daysInMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+
+            for (let i = 0; i < firstDay; i++) daysGrid.appendChild(Object.assign(document.createElement('div'), { className: 'day-cell bg-slate-50/20' }));
+
+            for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+                const date = new Date(monthDate.getFullYear(), monthDate.getMonth(), dayNum);
+                const time = date.getTime();
+                const cell = document.createElement('div');
+                cell.className = 'day-cell p-2 cursor-pointer';
+                cell.innerHTML = `<span class="text-xs font-semibold text-slate-300">${dayNum}</span>`;
+
+                // Common Layers
+                if (time >= d.bufferStart.getTime() && time < d.idealDate.getTime()) cell.classList.add('is-buffer-before');
+                if (time > d.idealDate.getTime() && time <= d.bufferEnd.getTime()) cell.classList.add('is-buffer-after');
+                if (time === d.idealDate.getTime()) cell.classList.add('is-buffer-both');
+
+                // Simulation Specific Layer
+                if (d.isFailure) {
+                    if (time > d.idealInviteDate.getTime() && time < d.inviteSentDate.getTime()) cell.classList.add('is-waiting');
+                    if (time === d.manualEscalationDate.getTime()) {
+                        cell.classList.add('is-manual');
+                        cell.innerHTML += `<div class="text-[8px] mt-1 font-black">REROUTE TO MANUAL</div>`;
+                    }
+                }
+
+                // Markers
+                if (time === d.today.getTime()) {
+                    cell.classList.add('is-today');
+                    cell.innerHTML += `<span class="today-badge">TODAY</span>`;
+                }
+                if (time === d.idealDate.getTime()) {
+                    cell.classList.add('is-ideal');
+                    cell.innerHTML += `<div class="text-[8px] mt-1 font-black leading-tight">IDEAL APPT</div>`;
+                }
+                
+                if (time === d.idealInviteDate.getTime()) {
+                    if (d.isFailure) {
+                        cell.classList.add('is-ideal-invite-anchor');
+                        cell.innerHTML += `<div class="text-[8px] mt-1 font-bold text-blue-600">IDEAL TRIGGER</div>`;
+                    } else {
+                        cell.classList.add('is-invite');
+                        cell.innerHTML += `<div class="text-[8px] mt-1 font-black">INVITE SENT</div>`;
+                    }
+                }
+
+                if (d.isFailure && time === d.inviteSentDate.getTime()) {
+                    cell.classList.add('is-invite');
+                    cell.innerHTML += `<div class="text-[8px] mt-1 font-black">INVITE SENT</div>`;
+                }
+
+                cell.onclick = () => { idealDate = new Date(date); renderAll(); };
+                daysGrid.appendChild(cell);
+            }
+            monthWrapper.appendChild(daysGrid);
+            container.appendChild(monthWrapper);
+        }
+
+        const inputs = ['param-invite', 'param-buffer-before', 'param-buffer-after', 'param-manual', 'sim-capacity-failure'];
+        inputs.forEach(id => document.getElementById(id).addEventListener('input', renderAll));
+
+        renderAll();
+    </script>
+</body>
+</html>
